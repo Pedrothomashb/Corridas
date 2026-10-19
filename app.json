@@ -2,11 +2,12 @@
   "expo": {
     "name": "Corridas",
     "slug": "corridas-app",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "corridas",
     "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.revision.corridas"
@@ -18,6 +19,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.revision.corridas"
     },
@@ -30,9 +32,10 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#000000",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 96
+          "imageWidth": 96,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
         }
       ]
     ],

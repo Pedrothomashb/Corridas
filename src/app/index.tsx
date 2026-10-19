@@ -179,7 +179,7 @@ export default function CorridaScreen() {
     status === 'idle'
       ? 'Selecione os participantes e toque em Iniciar.\nTodos os pilotos largam juntos.'
       : 'As voltas aparecem aqui.';
-  const bottomPad = insets.bottom + BottomTabInset + 16;
+  const bottomPad = BottomTabInset + 16;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 8 }]}>

@@ -1,7 +1,6 @@
 import { Stack } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PilotFormModal } from '@/components/PilotFormModal';
 import { EmptyHint, NumberBadge } from '@/components/RaceLists';
@@ -14,7 +13,6 @@ import type { Pilot } from '@/lib/types';
 
 export default function PilotosScreen() {
   const { pilots, addPilot, updatePilot, removePilot } = useStore();
-  const insets = useSafeAreaInsets();
   const [editing, setEditing] = useState<Pilot | null>(null);
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState(0);
@@ -48,7 +46,7 @@ export default function PilotosScreen() {
       <FlatList
         style={styles.screen}
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + BottomTabInset + 16 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: BottomTabInset + 16 }]}
         data={pilots}
         keyExtractor={(p) => p.id}
         ListHeaderComponent={
