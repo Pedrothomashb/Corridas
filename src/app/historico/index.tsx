@@ -1,6 +1,7 @@
 import { Stack, useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyHint } from '@/components/RaceLists';
 import { BottomTabInset } from '@/constants/layout';
@@ -12,6 +13,7 @@ import { useStore } from '@/lib/store';
 export default function HistoricoScreen() {
   const { races } = useStore();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const items = useMemo(
     () =>
@@ -32,7 +34,7 @@ export default function HistoricoScreen() {
       <FlatList
         style={styles.screen}
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.content, { paddingBottom: BottomTabInset + 16 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + BottomTabInset + 16 }]}
         data={items}
         keyExtractor={(i) => i.race.id}
         renderItem={({ item, index }) => (

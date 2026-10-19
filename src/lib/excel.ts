@@ -155,7 +155,7 @@ export async function exportRaceToExcel(race: Race) {
   const file = new File(Paths.cache, name);
   if (file.exists) file.delete();
   file.create();
-  file.write(new Uint8Array(data));
+  await file.write(new Uint8Array(data));
 
   if (!(await Sharing.isAvailableAsync()))
     throw new Error('Compartilhamento indisponível neste dispositivo.');

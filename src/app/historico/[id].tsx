@@ -1,6 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyHint, NumberBadge, StandingRowView } from '@/components/RaceLists';
 import { BottomTabInset } from '@/constants/layout';
@@ -15,6 +16,7 @@ export default function CorridaDetalhe() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { races, removeRace } = useStore();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [exporting, setExporting] = useState(false);
 
   const race = races.find((r) => r.id === id) ?? null;
@@ -54,7 +56,7 @@ export default function CorridaDetalhe() {
       <ScrollView
         style={styles.screen}
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.content, { paddingBottom: BottomTabInset + 24 }]}>
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + BottomTabInset + 24 }]}>
         <Text style={styles.date}>
           {formatDate(race.startedAt)} · largada {formatClock(race.startedAt)}
           {race.finishedAt ? ` · fim ${formatClock(race.finishedAt)}` : ''}

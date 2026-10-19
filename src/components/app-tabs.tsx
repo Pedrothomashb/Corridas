@@ -1,64 +1,29 @@
-import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
-import { PlatformPressable } from '@react-navigation/elements';
-import * as Haptics from 'expo-haptics';
-import { Tabs } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { C } from '@/constants/theme';
-
-function HapticTab(props: BottomTabBarButtonProps) {
-  return (
-    <PlatformPressable
-      {...props}
-      onPressIn={(ev) => {
-        if (process.env.EXPO_OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        props.onPressIn?.(ev);
-      }}
-    />
-  );
-}
 
 export default function AppTabs() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarActiveTintColor: C.orange,
-        tabBarInactiveTintColor: C.textSecondary,
-        tabBarStyle: {
-          backgroundColor: '#0D0D0D',
-          borderTopColor: C.separator,
-          borderTopWidth: StyleSheet.hairlineWidth,
-        },
-        sceneStyle: { backgroundColor: C.bg },
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Corrida',
-          tabBarIcon: ({ color, focused }) => (
-            <IconSymbol size={28} name={focused ? 'stopwatch.fill' : 'stopwatch'} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="pilotos"
-        options={{
-          title: 'Pilotos',
-          tabBarIcon: ({ color, focused }) => (
-            <IconSymbol size={28} name={focused ? 'person.2.fill' : 'person.2'} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="historico"
-        options={{
-          title: 'Histórico',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="clock.arrow.circlepath" color={color} />,
-        }}
-      />
-    </Tabs>
+    <NativeTabs
+      tintColor={C.orange}
+      backgroundColor={C.bg}
+      indicatorColor={C.card2}
+      iconColor={{ default: C.textSecondary, selected: C.orange }}
+      labelStyle={{ default: { color: C.textSecondary }, selected: { color: C.orange } }}>
+      <NativeTabs.Trigger name="index">
+        <NativeTabs.Trigger.Label>Corrida</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'stopwatch', selected: 'stopwatch.fill' }} md="timer" />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="pilotos">
+        <NativeTabs.Trigger.Label>Pilotos</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'person.2', selected: 'person.2.fill' }} md="group" />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="historico">
+        <NativeTabs.Trigger.Label>Histórico</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="clock.arrow.circlepath" md="history" />
+      </NativeTabs.Trigger>
+    </NativeTabs>
   );
 }

@@ -1,2 +1,4 @@
-/** Com abas JS (SDK 54) o conteúdo fica acima da barra de abas, sem sobreposição. */
-export const BottomTabInset = 0;
+import { Platform } from 'react-native';
+
+/** Espaço da barra de abas nativa (o conteúdo passa por baixo dela). */
+export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
