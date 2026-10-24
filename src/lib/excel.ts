@@ -1,4 +1,4 @@
-import { File, Paths } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import * as XLSX from 'xlsx';
@@ -141,21 +141,45 @@ export function excelFileName(race: Race) {
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+function workbookBytes(race: Race) {
+  const data = XLSX.write(buildWorkbook(race), {
+    type: 'array',
+    bookType: 'xlsx',
+    compression: true,
+  }) as ArrayBuffer;
+  return new Uint8Array(data);
+}
+
+/**
+ * Android: o usuário escolhe uma pasta do celular (Downloads, Documentos...) e o .xlsx é salvo nela.
+ * Retorna o nome do arquivo salvo, ou null se o usuário cancelou a escolha da pasta.
+ */
+export async function saveRaceToDevice(race: Race): Promise<string | null> {
+  const name = excelFileName(race);
+  let dir: Directory;
+  try {
+    dir = await Directory.pickDirectoryAsync();
+  } catch {
+    return null;
+  }
+  const file = dir.createFile(name, XLSX_MIME);
+  await file.write(workbookBytes(race));
+  return file.name || name;
+}
+
 /** Gera o .xlsx e abre a planilha de compartilhamento (WhatsApp, e-mail, Drive, Arquivos...). */
 export async function exportRaceToExcel(race: Race) {
-  const wb = buildWorkbook(race);
   const name = excelFileName(race);
 
   if (Platform.OS === 'web') {
-    XLSX.writeFile(wb, name);
+    XLSX.writeFile(buildWorkbook(race), name);
     return;
   }
 
-  const data = XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer;
   const file = new File(Paths.cache, name);
   if (file.exists) file.delete();
   file.create();
-  await file.write(new Uint8Array(data));
+  await file.write(workbookBytes(race));
 
   if (!(await Sharing.isAvailableAsync()))
     throw new Error('Compartilhamento indisponível neste dispositivo.');

@@ -1,13 +1,13 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyHint, NumberBadge, StandingRowView } from '@/components/RaceLists';
 import { BottomTabInset } from '@/constants/layout';
 import { C, MONO_DIGITS, THIN } from '@/constants/theme';
-import { confirm, notify } from '@/lib/dialog';
-import { exportRaceToExcel } from '@/lib/excel';
+import { choose, confirm, notify } from '@/lib/dialog';
+import { exportRaceToExcel, saveRaceToDevice } from '@/lib/excel';
 import { formatClock, formatDate, formatMs, plural } from '@/lib/format';
 import { fastestLap, raceDuration, standings } from '@/lib/race';
 import { useStore } from '@/lib/store';
@@ -33,9 +33,23 @@ export default function CorridaDetalhe() {
   }
 
   const exportar = async () => {
+    const mode =
+      Platform.OS === 'android'
+        ? await choose('Exportar Excel', 'Onde deseja colocar a planilha?', [
+            { text: 'Cancelar', value: null, style: 'cancel' },
+            { text: 'Compartilhar', value: 'share' as const },
+            { text: 'Salvar no celular', value: 'save' as const },
+          ])
+        : ('share' as const);
+    if (!mode) return;
     try {
       setExporting(true);
-      await exportRaceToExcel(race);
+      if (mode === 'save') {
+        const saved = await saveRaceToDevice(race);
+        if (saved) notify('Planilha salva', saved);
+      } else {
+        await exportRaceToExcel(race);
+      }
     } catch (e) {
       notify('Erro ao exportar', e instanceof Error ? e.message : String(e));
     } finally {
