@@ -1,8 +1,15 @@
+export type Category = {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+};
+
 export type Pilot = {
   id: string;
   number: number;
   name: string;
-  team: string;
+  categoryId: string | null;
   createdAt: number;
 };
 
@@ -11,10 +18,22 @@ export type RacePilot = {
   id: string;
   number: number;
   name: string;
-  team: string;
+  categoryId: string | null;
+  categoryName: string;
+  categoryColor: string;
+  groupId: string;
 };
 
-/** Passagem pela linha: t = tempo de prova (ms) no momento da volta. */
+/** Pelotão: conjunto de categorias que largam juntas. */
+export type RaceGroup = {
+  id: string;
+  name: string;
+  categoryIds: (string | null)[];
+  /** Momento da largada no relógio da corrida (ms). null = ainda não largou. */
+  startOffsetMs: number | null;
+};
+
+/** Passagem pela linha: t = relógio da corrida (ms) no momento da volta. */
 export type Lap = {
   id: string;
   pilotId: string;
@@ -26,10 +45,11 @@ export type RaceStatus = 'running' | 'paused' | 'finished';
 export type Race = {
   id: string;
   name: string;
-  /** Data/hora (relógio) da largada. */
+  /** Data/hora (relógio) do início da corrida (largada do 1º pelotão). */
   startedAt: number;
   finishedAt: number | null;
   status: RaceStatus;
+  groups: RaceGroup[];
   pilots: RacePilot[];
   laps: Lap[];
   /** Tempo acumulado até a última pausa. */
@@ -41,5 +61,11 @@ export type Race = {
 export type PilotInput = {
   number: number;
   name: string;
-  team: string;
+  categoryId: string | null;
+};
+
+/** Montagem da próxima corrida (fica salva para as próximas baterias). */
+export type RaceSetup = {
+  groups: { id: string; categoryIds: (string | null)[] }[];
+  excludedPilotIds: string[];
 };

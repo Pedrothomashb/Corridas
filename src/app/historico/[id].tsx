@@ -3,13 +3,14 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { EmptyHint, NumberBadge, StandingRowView } from '@/components/RaceLists';
+import { CategoryDot, CategoryHeader, EmptyHint, NumberBadge, StandingRowView } from '@/components/RaceLists';
 import { BottomTabInset } from '@/constants/layout';
 import { C, MONO_DIGITS, THIN } from '@/constants/theme';
 import { choose, confirm, notify } from '@/lib/dialog';
 import { exportRaceToExcel, saveRaceToDevice } from '@/lib/excel';
 import { formatClock, formatDate, formatMs, plural } from '@/lib/format';
-import { fastestLap, raceDuration, standings } from '@/lib/race';
+import { catKey } from '@/lib/categories';
+import { fastestLap, groupCategories, raceDuration, standingsByCategory } from '@/lib/race';
 import { useStore } from '@/lib/store';
 
 export default function CorridaDetalhe() {
@@ -20,7 +21,7 @@ export default function CorridaDetalhe() {
   const [exporting, setExporting] = useState(false);
 
   const race = races.find((r) => r.id === id) ?? null;
-  const table = useMemo(() => (race ? standings(race) : []), [race]);
+  const table = useMemo(() => (race ? standingsByCategory(race) : []), [race]);
   const best = useMemo(() => (race ? fastestLap(race) : null), [race]);
 
   if (!race) {
@@ -101,46 +102,80 @@ export default function CorridaDetalhe() {
           )}
         </Pressable>
 
-        <Text style={styles.section}>Classificação</Text>
-        <View style={styles.card}>
-          {table.map((s) => (
-            <StandingRowView key={s.pilot.id} s={s} />
-          ))}
-        </View>
-
-        <Text style={styles.section}>Voltas por piloto</Text>
-        {table.map((s) => {
-          const fastest = s.lapTimes.length > 1 ? Math.min(...s.lapTimes) : null;
-          const slowest = s.lapTimes.length > 1 ? Math.max(...s.lapTimes) : null;
-          return (
-            <View key={s.pilot.id} style={[styles.card, styles.pilotCard]}>
-              <View style={styles.pilotHead}>
-                <NumberBadge number={s.pilot.number} />
-                <View style={styles.flex}>
-                  <Text style={styles.pilotName}>{s.pilot.name}</Text>
-                  <Text style={styles.pilotSub}>
-                    {plural(s.laps, 'volta', 'voltas')}
-                    {s.avgMs != null ? ` · média ${formatMs(s.avgMs)}` : ''}
-                    {s.totalMs != null ? ` · total ${formatMs(s.totalMs)}` : ''}
+        {race.groups.length > 1 && (
+          <>
+            <Text style={styles.section}>Pelotões</Text>
+            <View style={styles.card}>
+              {race.groups.map((g) => (
+                <View key={g.id} style={styles.groupRow}>
+                  <Text style={styles.groupName}>{g.name}</Text>
+                  <View style={styles.groupCats}>
+                    {groupCategories(race, g).map((c) => (
+                      <View key={catKey(c.id)} style={styles.groupCat}>
+                        <CategoryDot color={c.color} />
+                        <Text style={styles.groupCatText}>{c.name}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={styles.groupStart}>
+                    {g.startOffsetMs == null ? 'não largou' : `largada ${formatMs(g.startOffsetMs)}`}
                   </Text>
                 </View>
-              </View>
-              {s.lapTimes.length === 0 ? (
-                <Text style={styles.noLaps}>Sem voltas registradas</Text>
-              ) : (
-                s.lapTimes.map((ms, i) => {
-                  const color = ms === fastest ? C.green : ms === slowest ? C.red : C.text;
-                  return (
-                    <View key={i} style={styles.lapRow}>
-                      <Text style={[styles.lapLabel, { color }]}>Volta {i + 1}</Text>
-                      <Text style={[styles.lapTime, { color }]}>{formatMs(ms)}</Text>
-                    </View>
-                  );
-                })
-              )}
+              ))}
             </View>
-          );
-        })}
+          </>
+        )}
+
+        <Text style={styles.section}>Classificação por categoria</Text>
+        {table.map((cat) => (
+          <View key={cat.key}>
+            <CategoryHeader name={cat.name} color={cat.color} right={cat.group.name} />
+            <View style={styles.card}>
+              {cat.rows.map((s) => (
+                <StandingRowView key={s.pilot.id} s={s} />
+              ))}
+            </View>
+          </View>
+        ))}
+
+        <Text style={styles.section}>Voltas por piloto</Text>
+        {table
+          .flatMap((cat) => cat.rows)
+          .map((s) => {
+            const fastest = s.lapTimes.length > 1 ? Math.min(...s.lapTimes) : null;
+            const slowest = s.lapTimes.length > 1 ? Math.max(...s.lapTimes) : null;
+            return (
+              <View key={s.pilot.id} style={[styles.card, styles.pilotCard]}>
+                <View style={styles.pilotHead}>
+                  <NumberBadge number={s.pilot.number} color={s.pilot.categoryColor} />
+                  <View style={styles.flex}>
+                    <Text style={styles.pilotName}>{s.pilot.name}</Text>
+                    <Text style={[styles.pilotSub, { color: s.pilot.categoryColor }]}>
+                      {s.pilot.categoryName} · {s.position}º
+                    </Text>
+                    <Text style={styles.pilotSub}>
+                      {plural(s.laps, 'volta', 'voltas')}
+                      {s.avgMs != null ? ` · média ${formatMs(s.avgMs)}` : ''}
+                      {s.totalMs != null ? ` · total ${formatMs(s.totalMs)}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                {s.lapTimes.length === 0 ? (
+                  <Text style={styles.noLaps}>Sem voltas registradas</Text>
+                ) : (
+                  s.lapTimes.map((ms, i) => {
+                    const color = ms === fastest ? C.green : ms === slowest ? C.red : C.text;
+                    return (
+                      <View key={i} style={styles.lapRow}>
+                        <Text style={[styles.lapLabel, { color }]}>Volta {i + 1}</Text>
+                        <Text style={[styles.lapTime, { color }]}>{formatMs(ms)}</Text>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            );
+          })}
 
         <Pressable onPress={excluir} style={[styles.card, styles.delete]}>
           <Text style={styles.deleteText}>Excluir corrida</Text>
@@ -197,6 +232,17 @@ const styles = StyleSheet.create({
   },
   lapLabel: { fontSize: 16 },
   lapTime: { fontSize: 16, ...MONO_DIGITS },
+  groupRow: {
+    paddingVertical: 10,
+    gap: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.separator,
+  },
+  groupName: { color: C.text, fontSize: 15, fontWeight: '700' },
+  groupCats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  groupCat: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  groupCatText: { color: C.textSecondary, fontSize: 13 },
+  groupStart: { color: C.textTertiary, fontSize: 12, ...MONO_DIGITS },
   delete: { alignItems: 'center', paddingVertical: 14, marginTop: 12 },
   deleteText: { color: C.red, fontSize: 17 },
 });

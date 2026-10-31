@@ -1,19 +1,31 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
+import { catKey, categoryLabel, nextCategoryColor } from './categories';
 import { uid } from './id';
-import { elapsedMs } from './race';
+import { elapsedMs, groupName, normalizeRace } from './race';
 import { KEYS, load, save } from './storage';
-import type { Pilot, PilotInput, Race } from './types';
+import type { Category, Pilot, PilotInput, Race, RaceGroup, RacePilot, RaceSetup } from './types';
 
 type Store = {
   ready: boolean;
+  categories: Category[];
   pilots: Pilot[];
   races: Race[];
   current: Race | null;
+  setup: RaceSetup;
+
+  addCategory(name: string): { id?: string; error?: string };
+  updateCategory(id: string, name: string): string | null;
+  removeCategory(id: string): void;
+
   addPilot(input: PilotInput): string | null;
   updatePilot(id: string, input: PilotInput): string | null;
   removePilot(id: string): void;
-  startRace(name: string, pilotIds: string[]): void;
+
+  setSetup(setup: RaceSetup): void;
+  startRace(name: string): void;
+  startGroup(groupId: string, at?: number): void;
+  cancelGroupStart(groupId: string): void;
   pauseRace(): void;
   resumeRace(): void;
   addLap(pilotId: string, at?: number): void;
@@ -26,37 +38,91 @@ type Store = {
 
 const Ctx = createContext<Store | null>(null);
 
-function validatePilot(input: PilotInput, pilots: Pilot[], ignoreId?: string): string | null {
+const EMPTY_SETUP: RaceSetup = { groups: [], excludedPilotIds: [] };
+
+function validatePilot(input: PilotInput, pilots: Pilot[], categories: Category[], ignoreId?: string) {
   if (!Number.isInteger(input.number) || input.number < 0 || input.number > 9999)
     return 'Informe um número de piloto válido (0 a 9999).';
   if (!input.name.trim()) return 'Informe o nome do piloto.';
-  const dup = pilots.find((p) => p.number === input.number && p.id !== ignoreId);
-  if (dup) return `O número ${input.number} já pertence a ${dup.name}.`;
+  const dup = pilots.find(
+    (p) => p.number === input.number && p.categoryId === input.categoryId && p.id !== ignoreId,
+  );
+  if (dup) {
+    const cat = categoryLabel(categories, input.categoryId).name;
+    return `O número ${input.number} já pertence a ${dup.name} (${cat}).`;
+  }
+  return null;
+}
+
+function validateCategoryName(name: string, categories: Category[], ignoreId?: string) {
+  const n = name.trim();
+  if (!n) return 'Informe o nome da categoria.';
+  if (categories.some((c) => c.id !== ignoreId && c.name.toLowerCase() === n.toLowerCase()))
+    return `Já existe a categoria "${n}".`;
   return null;
 }
 
 const byNumber = (a: { number: number }, b: { number: number }) => a.number - b.number;
 
+/** Montagem padrão: um pelotão com todas as categorias que têm pilotos. */
+export function defaultSetup(categories: Category[], pilots: Pilot[]): RaceSetup {
+  const ids: (string | null)[] = categories
+    .filter((c) => pilots.some((p) => p.categoryId === c.id))
+    .map((c) => c.id);
+  if (pilots.some((p) => p.categoryId == null)) ids.push(null);
+  return { groups: [{ id: uid(), categoryIds: ids }], excludedPilotIds: [] };
+}
+
+/** Remove da montagem categorias/pilotos que não existem mais. */
+export function sanitizeSetup(setup: RaceSetup, categories: Category[], pilots: Pilot[]): RaceSetup {
+  const valid = new Set(categories.map((c) => c.id));
+  const groups = setup.groups.map((g) => ({
+    ...g,
+    categoryIds: g.categoryIds.filter((id) => id == null || valid.has(id)),
+  }));
+  if (groups.length === 0) return defaultSetup(categories, pilots);
+  const pilotIds = new Set(pilots.map((p) => p.id));
+  return { groups, excludedPilotIds: setup.excludedPilotIds.filter((id) => pilotIds.has(id)) };
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [pilots, setPilots] = useState<Pilot[]>([]);
   const [races, setRaces] = useState<Race[]>([]);
   const [current, setCurrent] = useState<Race | null>(null);
+  const [setup, setSetupState] = useState<RaceSetup>(EMPTY_SETUP);
 
   useEffect(() => {
     (async () => {
-      const [p, r, c] = await Promise.all([
+      const [cats, p, r, c, s] = await Promise.all([
+        load<Category[]>(KEYS.categories, []),
         load<Pilot[]>(KEYS.pilots, []),
-        load<Race[]>(KEYS.races, []),
-        load<Race | null>(KEYS.current, null),
+        load<unknown[]>(KEYS.races, []),
+        load<unknown | null>(KEYS.current, null),
+        load<RaceSetup>(KEYS.setup, EMPTY_SETUP),
       ]);
-      setPilots(p);
-      setRaces(r);
-      setCurrent(c);
+      setCategories(cats);
+      // v1–v5 tinham "equipe"; agora o piloto pertence a uma categoria
+      setPilots(
+        p.map((x) => ({
+          id: x.id,
+          number: x.number,
+          name: x.name,
+          categoryId: x.categoryId ?? null,
+          createdAt: x.createdAt,
+        })),
+      );
+      setRaces(r.map(normalizeRace));
+      setCurrent(c ? normalizeRace(c) : null);
+      setSetupState(s ?? EMPTY_SETUP);
       setReady(true);
     })();
   }, []);
 
+  useEffect(() => {
+    if (ready) save(KEYS.categories, categories);
+  }, [categories, ready]);
   useEffect(() => {
     if (ready) save(KEYS.pilots, pilots);
   }, [pilots, ready]);
@@ -66,54 +132,148 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (ready) save(KEYS.current, current);
   }, [current, ready]);
+  useEffect(() => {
+    if (ready) save(KEYS.setup, setup);
+  }, [setup, ready]);
 
+  // ---------------- categorias
+  const addCategory = useCallback(
+    (name: string) => {
+      const error = validateCategoryName(name, categories);
+      if (error) return { error };
+      const cat: Category = {
+        id: uid(),
+        name: name.trim(),
+        color: nextCategoryColor(categories),
+        createdAt: Date.now(),
+      };
+      setCategories((prev) => [...prev, cat]);
+      return { id: cat.id };
+    },
+    [categories],
+  );
+
+  const updateCategory = useCallback(
+    (id: string, name: string) => {
+      const error = validateCategoryName(name, categories, id);
+      if (error) return error;
+      setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, name: name.trim() } : c)));
+      return null;
+    },
+    [categories],
+  );
+
+  const removeCategory = useCallback((id: string) => {
+    setCategories((prev) => prev.filter((c) => c.id !== id));
+    setPilots((prev) => prev.map((p) => (p.categoryId === id ? { ...p, categoryId: null } : p)));
+    setSetupState((s) => ({
+      ...s,
+      groups: s.groups.map((g) => ({ ...g, categoryIds: g.categoryIds.filter((c) => c !== id) })),
+    }));
+  }, []);
+
+  // ---------------- pilotos
   const addPilot = useCallback(
     (input: PilotInput) => {
-      const clean = { ...input, name: input.name.trim(), team: input.team.trim() };
-      const err = validatePilot(clean, pilots);
+      const clean = { ...input, name: input.name.trim() };
+      const err = validatePilot(clean, pilots, categories);
       if (err) return err;
       setPilots((prev) => [...prev, { id: uid(), createdAt: Date.now(), ...clean }].sort(byNumber));
       return null;
     },
-    [pilots],
+    [pilots, categories],
   );
 
   const updatePilot = useCallback(
     (id: string, input: PilotInput) => {
-      const clean = { ...input, name: input.name.trim(), team: input.team.trim() };
-      const err = validatePilot(clean, pilots, id);
+      const clean = { ...input, name: input.name.trim() };
+      const err = validatePilot(clean, pilots, categories, id);
       if (err) return err;
       setPilots((prev) => prev.map((p) => (p.id === id ? { ...p, ...clean } : p)).sort(byNumber));
       return null;
     },
-    [pilots],
+    [pilots, categories],
   );
 
   const removePilot = useCallback((id: string) => {
     setPilots((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
+  // ---------------- corrida
+  const setSetup = useCallback((s: RaceSetup) => setSetupState(s), []);
+
   const startRace = useCallback(
-    (name: string, pilotIds: string[]) => {
+    (name: string) => {
+      const s = sanitizeSetup(setup, categories, pilots);
+      const excluded = new Set(s.excludedPilotIds);
+      const groups: RaceGroup[] = [];
+      const racePilots: RacePilot[] = [];
+
+      for (const g of s.groups) {
+        const keys = new Set(g.categoryIds.map(catKey));
+        const members = pilots.filter((p) => keys.has(catKey(p.categoryId)) && !excluded.has(p.id));
+        if (!members.length) continue;
+        const group: RaceGroup = {
+          id: g.id,
+          name: groupName(groups.length),
+          categoryIds: g.categoryIds,
+          startOffsetMs: groups.length === 0 ? 0 : null,
+        };
+        groups.push(group);
+        for (const p of [...members].sort(byNumber)) {
+          const label = categoryLabel(categories, p.categoryId);
+          racePilots.push({
+            id: p.id,
+            number: p.number,
+            name: p.name,
+            categoryId: p.categoryId,
+            categoryName: label.name,
+            categoryColor: label.color,
+            groupId: group.id,
+          });
+        }
+      }
+      if (!groups.length) return;
+
       const now = Date.now();
-      const selected = pilots
-        .filter((p) => pilotIds.includes(p.id))
-        .map(({ id, number, name: n, team }) => ({ id, number, name: n, team }))
-        .sort(byNumber);
       setCurrent({
         id: uid(),
         name: name.trim(),
         startedAt: now,
         finishedAt: null,
         status: 'running',
-        pilots: selected,
+        groups,
+        pilots: racePilots,
         laps: [],
         accumulatedMs: 0,
         runningSince: now,
       });
     },
-    [pilots],
+    [setup, categories, pilots],
   );
+
+  const startGroup = useCallback((groupId: string, at?: number) => {
+    const when = at ?? Date.now();
+    setCurrent((r) => {
+      if (!r || r.status !== 'running') return r;
+      const t = elapsedMs(r, when);
+      return {
+        ...r,
+        groups: r.groups.map((g) =>
+          g.id === groupId && g.startOffsetMs == null ? { ...g, startOffsetMs: t } : g,
+        ),
+      };
+    });
+  }, []);
+
+  const cancelGroupStart = useCallback((groupId: string) => {
+    setCurrent((r) => {
+      if (!r) return r;
+      const ids = new Set(r.pilots.filter((p) => p.groupId === groupId).map((p) => p.id));
+      if (r.laps.some((l) => ids.has(l.pilotId))) return r;
+      return { ...r, groups: r.groups.map((g) => (g.id === groupId ? { ...g, startOffsetMs: null } : g)) };
+    });
+  }, []);
 
   const pauseRace = useCallback(() => {
     setCurrent((r) =>
@@ -133,7 +293,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const when = at ?? Date.now();
     setCurrent((r) => {
       if (!r || r.status !== 'running') return r;
+      const pilot = r.pilots.find((p) => p.id === pilotId);
+      const group = r.groups.find((g) => g.id === pilot?.groupId);
+      if (!group || group.startOffsetMs == null) return r;
       const t = elapsedMs(r, when);
+      if (t <= group.startOffsetMs) return r;
       return { ...r, laps: [...r.laps, { id: uid(), pilotId, t }] };
     });
   }, []);
@@ -170,13 +334,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Store>(
     () => ({
       ready,
+      categories,
       pilots,
       races,
       current,
+      setup,
+      addCategory,
+      updateCategory,
+      removeCategory,
       addPilot,
       updatePilot,
       removePilot,
+      setSetup,
       startRace,
+      startGroup,
+      cancelGroupStart,
       pauseRace,
       resumeRace,
       addLap,
@@ -188,13 +360,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }),
     [
       ready,
+      categories,
       pilots,
       races,
       current,
+      setup,
+      addCategory,
+      updateCategory,
+      removeCategory,
       addPilot,
       updatePilot,
       removePilot,
+      setSetup,
       startRace,
+      startGroup,
+      cancelGroupStart,
       pauseRace,
       resumeRace,
       addLap,

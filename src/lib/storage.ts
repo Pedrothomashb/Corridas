@@ -6,6 +6,8 @@ export const KEYS = {
   pilots: PREFIX + 'pilots',
   races: PREFIX + 'races',
   current: PREFIX + 'current',
+  categories: PREFIX + 'categories',
+  setup: PREFIX + 'setup',
 } as const;
 
 export async function load<T>(key: string, fallback: T): Promise<T> {

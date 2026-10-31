@@ -6,6 +6,7 @@ import {
   FlatList,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,36 +15,53 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { GroupTimer } from '@/components/GroupTimer';
 import { PilotPad } from '@/components/PilotPad';
-import { EmptyHint, LapRowView, StandingRowView } from '@/components/RaceLists';
+import { CategoryDot, CategoryHeader, EmptyHint, LapRowView, StandingRowView } from '@/components/RaceLists';
+import { RaceSetup } from '@/components/RaceSetup';
 import { RoundButton } from '@/components/RoundButton';
 import { Segmented } from '@/components/Segmented';
 import { TimerText } from '@/components/TimerText';
 import { BottomTabInset } from '@/constants/layout';
-import { C } from '@/constants/theme';
+import { C, MONO_DIGITS } from '@/constants/theme';
+import { catKey, categoryLabel } from '@/lib/categories';
 import { choose, confirm } from '@/lib/dialog';
-import { defaultRaceName } from '@/lib/format';
-import { bestWorstIds, lapRows, standings } from '@/lib/race';
-import { useStore } from '@/lib/store';
+import { defaultRaceName, plural } from '@/lib/format';
+import {
+  groupCategories,
+  highlightByCategory,
+  lapRows,
+  standingsByCategory,
+  type CategoryStanding,
+  type Standing,
+} from '@/lib/race';
+import { sanitizeSetup, useStore } from '@/lib/store';
+import type { Race, RaceGroup } from '@/lib/types';
 
 const KEEP_AWAKE_TAG = 'corrida';
 
-function haptic(kind: 'lap' | 'action') {
+function haptic(kind: 'lap' | 'action' | 'start') {
   if (Platform.OS === 'web') return;
-  (kind === 'lap' ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium) : Haptics.selectionAsync()).catch(
-    () => {},
-  );
+  const p =
+    kind === 'lap'
+      ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      : kind === 'start'
+        ? Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        : Haptics.selectionAsync();
+  p.catch(() => {});
 }
+
+type TableItem =
+  { type: 'header'; key: string; cat: CategoryStanding } | { type: 'row'; key: string; s: Standing };
 
 export default function CorridaScreen() {
   const store = useStore();
-  const { current, pilots } = store;
+  const { current, pilots, categories } = store;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
 
   const [raceName, setRaceName] = useState('');
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [view, setView] = useState<'voltas' | 'classificacao'>('voltas');
 
   const status = current?.status ?? 'idle';
@@ -55,13 +73,37 @@ export default function CorridaScreen() {
     else deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
   }, [active]);
 
-  const participants = useMemo(() => pilots.filter((p) => !excluded.has(p.id)), [pilots, excluded]);
-  const selectedIds = useMemo(() => new Set(participants.map((p) => p.id)), [participants]);
+  // ----- montagem (antes de largar)
+  const setup = useMemo(
+    () => sanitizeSetup(store.setup, categories, pilots),
+    [store.setup, categories, pilots],
+  );
+  const participants = useMemo(() => {
+    const keys = new Set(setup.groups.flatMap((g) => g.categoryIds.map(catKey)));
+    const excluded = new Set(setup.excludedPilotIds);
+    return pilots.filter((p) => keys.has(catKey(p.categoryId)) && !excluded.has(p.id));
+  }, [setup, pilots]);
+  const setupLabel = useMemo(
+    () =>
+      setup.groups
+        .flatMap((g) => g.categoryIds)
+        .filter((id) => participants.some((p) => p.categoryId === id))
+        .map((id) => categoryLabel(categories, id).name)
+        .join(' · '),
+    [setup, participants, categories],
+  );
 
+  // ----- corrida em andamento
   const rows = useMemo(() => (current ? lapRows(current) : []), [current]);
   const recent = useMemo(() => [...rows].reverse(), [rows]);
-  const { bestId, worstId } = bestWorstIds(rows);
-  const table = useMemo(() => (current ? standings(current) : []), [current]);
+  const highlight = useMemo(() => highlightByCategory(rows), [rows]);
+  const tableItems = useMemo<TableItem[]>(() => {
+    if (!current) return [];
+    return standingsByCategory(current).flatMap((cat) => [
+      { type: 'header' as const, key: `h-${cat.key}`, cat },
+      ...cat.rows.map((s) => ({ type: 'row' as const, key: `r-${s.pilot.id}`, s })),
+    ]);
+  }, [current]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) m.set(r.pilot.id, (m.get(r.pilot.id) ?? 0) + 1);
@@ -71,14 +113,11 @@ export default function CorridaScreen() {
   const timerSize = Math.min(96, width * 0.2, height * 0.1);
   const btnSize = Math.min(84, Math.max(70, width * 0.2));
 
-  // ----- ações -----
+  // ----- ações
   const start = () => {
     if (!participants.length) return;
-    haptic('action');
-    store.startRace(
-      raceName.trim() || defaultRaceName(),
-      participants.map((p) => p.id),
-    );
+    haptic('start');
+    store.startRace(raceName.trim() || defaultRaceName(undefined, setupLabel));
     setRaceName('');
     setView('voltas');
   };
@@ -101,18 +140,15 @@ export default function CorridaScreen() {
     }
   };
 
-  const toggleParticipant = (id: string) => {
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const cancelStart = async (race: Race, g: RaceGroup) => {
+    const ids = new Set(race.pilots.filter((p) => p.groupId === g.id).map((p) => p.id));
+    if (race.laps.some((l) => ids.has(l.pilotId))) return;
+    if (await confirm('Cancelar largada', `Cancelar a largada do ${g.name}?`, 'Cancelar largada', true)) {
+      store.cancelGroupStart(g.id);
+    }
   };
 
-  const allSelected = excluded.size === 0 || pilots.every((p) => !excluded.has(p.id));
-
-  // ----- botões estilo iPhone -----
+  // ----- botões estilo iPhone
   const left =
     status === 'idle' ? (
       <RoundButton label="Desfazer" variant="gray" disabled size={btnSize} />
@@ -166,20 +202,8 @@ export default function CorridaScreen() {
       />
     );
 
-  // ----- teclado de pilotos -----
-  const padPilots = active ? current!.pilots : pilots;
-  const padTitle =
-    status === 'idle'
-      ? `Participantes · ${participants.length} de ${pilots.length}`
-      : status === 'running'
-        ? 'Toque no número ao completar a volta'
-        : 'Corrida pausada';
-
-  const emptyText =
-    status === 'idle'
-      ? 'Selecione os participantes e toque em Iniciar.\nTodos os pilotos largam juntos.'
-      : 'As voltas aparecem aqui.';
-  const bottomPad = insets.bottom + BottomTabInset + 16;
+  const bottomPad = BottomTabInset + 16;
+  const emptyText = 'As voltas aparecem aqui.';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 8 }]}>
@@ -189,7 +213,7 @@ export default function CorridaScreen() {
             testID="input-nome-corrida"
             value={raceName}
             onChangeText={setRaceName}
-            placeholder={defaultRaceName()}
+            placeholder={defaultRaceName(undefined, setupLabel)}
             placeholderTextColor={C.textTertiary}
             style={styles.nameInput}
             returnKeyType="done"
@@ -218,94 +242,155 @@ export default function CorridaScreen() {
         {right}
       </View>
 
-      <View style={styles.padSection}>
-        <View style={styles.padHeader}>
-          <Text style={styles.padTitle}>{padTitle}</Text>
-          {status === 'idle' && pilots.length > 0 && (
-            <Pressable
-              hitSlop={8}
-              onPress={() => setExcluded(allSelected ? new Set(pilots.map((p) => p.id)) : new Set())}>
-              <Text style={styles.link}>{allSelected ? 'Nenhum' : 'Todos'}</Text>
-            </Pressable>
-          )}
-        </View>
-
-        {padPilots.length > 0 ? (
-          <PilotPad
-            pilots={padPilots}
-            mode={status === 'idle' ? 'select' : status === 'running' ? 'lap' : 'disabled'}
-            selected={selectedIds}
-            counts={counts}
-            maxRows={status === 'idle' ? 3 : 2}
-            onPress={(p, at) => {
-              if (status === 'idle') {
-                haptic('action');
-                toggleParticipant(p.id);
-              } else if (status === 'running') {
-                haptic('lap');
-                store.addLap(p.id, at);
-              }
-            }}
-          />
-        ) : (
-          <View style={styles.noPilots}>
-            <Text style={styles.noPilotsText}>Nenhum piloto cadastrado.</Text>
-            <Pressable testID="btn-ir-pilotos" onPress={() => router.navigate('/pilotos')} style={styles.cta}>
-              <Text style={styles.ctaText}>Cadastrar pilotos</Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.segment}>
-        <Segmented
-          value={view}
-          onChange={setView}
-          options={[
-            { value: 'voltas', label: `Voltas${rows.length ? ` (${rows.length})` : ''}` },
-            { value: 'classificacao', label: 'Classificação' },
-          ]}
-        />
-      </View>
-
-      {view === 'voltas' ? (
-        <FlatList
-          style={styles.list}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad }}
-          data={recent}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <LapRowView
-              row={item}
-              highlight={item.id === bestId ? 'best' : item.id === worstId ? 'worst' : null}
-              onLongPress={
-                active
-                  ? async () => {
-                      if (
-                        await confirm(
-                          'Excluir volta',
-                          `Excluir a volta ${item.lapNumber} do piloto #${item.pilot.number}?`,
-                          'Excluir',
-                          true,
-                        )
-                      )
-                        store.removeLap(item.id);
-                    }
-                  : undefined
-              }
+      {!current ? (
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={[styles.setupContent, { paddingBottom: bottomPad }]}
+          keyboardShouldPersistTaps="handled">
+          {pilots.length === 0 ? (
+            <View style={styles.noPilots}>
+              <Text style={styles.noPilotsText}>Nenhum piloto cadastrado.</Text>
+              <Pressable
+                testID="btn-ir-pilotos"
+                onPress={() => router.navigate('/pilotos')}
+                style={styles.cta}>
+                <Text style={styles.ctaText}>Cadastrar pilotos</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <RaceSetup
+              categories={categories}
+              pilots={pilots}
+              setup={setup}
+              onChange={store.setSetup}
+              onHaptic={() => haptic('action')}
             />
           )}
-          ListEmptyComponent={<EmptyHint text={emptyText} />}
-        />
+        </ScrollView>
       ) : (
-        <FlatList
-          style={styles.list}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad }}
-          data={table}
-          keyExtractor={(item) => item.pilot.id}
-          renderItem={({ item }) => <StandingRowView s={item} />}
-          ListEmptyComponent={<EmptyHint text={emptyText} />}
-        />
+        <>
+          <ScrollView
+            style={[styles.padScroll, { maxHeight: height * 0.42 }]}
+            contentContainerStyle={styles.padContent}>
+            {current.groups.map((g, gi) => {
+              const started = g.startOffsetMs != null;
+              const cats = groupCategories(current, g);
+              const members = current.pilots.filter((p) => p.groupId === g.id);
+              return (
+                <View key={g.id} style={styles.group} testID={`grupo-${gi + 1}`}>
+                  <Pressable
+                    style={styles.groupHead}
+                    onLongPress={started ? () => cancelStart(current, g) : undefined}
+                    delayLongPress={600}>
+                    <View style={styles.flex}>
+                      <Text style={styles.groupName}>{g.name.toUpperCase()}</Text>
+                      <View style={styles.groupCats}>
+                        {cats.map((c) => (
+                          <View key={catKey(c.id)} style={styles.groupCat}>
+                            <CategoryDot color={c.color} />
+                            <Text style={styles.groupCatText} numberOfLines={1}>
+                              {c.name}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                    {started ? (
+                      <GroupTimer race={current} group={g} style={styles.groupTimer} />
+                    ) : (
+                      <Pressable
+                        testID={`btn-largar-${gi + 1}`}
+                        disabled={status !== 'running'}
+                        onPress={() => {
+                          haptic('start');
+                          store.startGroup(g.id);
+                        }}
+                        style={({ pressed }) => [
+                          styles.largar,
+                          status !== 'running' && styles.largarDisabled,
+                          pressed && { opacity: 0.7 },
+                        ]}>
+                        <Text style={styles.largarText}>LARGAR</Text>
+                      </Pressable>
+                    )}
+                  </Pressable>
+                  <PilotPad
+                    pilots={members.map((p) => ({
+                      id: p.id,
+                      number: p.number,
+                      name: p.name,
+                      color: p.categoryColor,
+                    }))}
+                    mode={started && status === 'running' ? 'lap' : 'disabled'}
+                    counts={counts}
+                    onPress={(p, at) => {
+                      haptic('lap');
+                      store.addLap(p.id, at);
+                    }}
+                  />
+                  {!started && (
+                    <Text style={styles.waiting}>
+                      Aguardando largada · {plural(members.length, 'piloto', 'pilotos')}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.segment}>
+            <Segmented
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'voltas', label: `Voltas${rows.length ? ` (${rows.length})` : ''}` },
+                { value: 'classificacao', label: 'Classificação' },
+              ]}
+            />
+          </View>
+
+          {view === 'voltas' ? (
+            <FlatList
+              style={styles.flex}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad }}
+              data={recent}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <LapRowView
+                  row={item}
+                  highlight={highlight.get(item.id) ?? null}
+                  onLongPress={async () => {
+                    if (
+                      await confirm(
+                        'Excluir volta',
+                        `Excluir a volta ${item.lapNumber} do piloto #${item.pilot.number} (${item.pilot.categoryName})?`,
+                        'Excluir',
+                        true,
+                      )
+                    )
+                      store.removeLap(item.id);
+                  }}
+                />
+              )}
+              ListEmptyComponent={<EmptyHint text={emptyText} />}
+            />
+          ) : (
+            <FlatList
+              style={styles.flex}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad }}
+              data={tableItems}
+              keyExtractor={(item) => item.key}
+              renderItem={({ item }) =>
+                item.type === 'header' ? (
+                  <CategoryHeader name={item.cat.name} color={item.cat.color} right={item.cat.group.name} />
+                ) : (
+                  <StandingRowView s={item.s} />
+                )
+              }
+              ListEmptyComponent={<EmptyHint text={emptyText} />}
+            />
+          )}
+        </>
       )}
     </View>
   );
@@ -313,6 +398,7 @@ export default function CorridaScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
+  flex: { flex: 1 },
   header: { paddingHorizontal: 16, alignItems: 'center', gap: 6, minHeight: 52 },
   nameInput: {
     color: C.text,
@@ -321,7 +407,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: 6,
     paddingHorizontal: 14,
-    minWidth: 240,
+    alignSelf: 'stretch',
     backgroundColor: C.card,
     borderRadius: 10,
     outlineWidth: 0,
@@ -337,14 +423,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginTop: 4,
   },
-  padSection: { paddingHorizontal: 16, marginTop: 18, gap: 10 },
-  padHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  padTitle: { color: C.textSecondary, fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 },
-  link: { color: C.orange, fontSize: 15 },
+  setupContent: { paddingHorizontal: 16, paddingTop: 16 },
+  padScroll: { marginTop: 14, flexGrow: 0 },
+  padContent: { paddingHorizontal: 16, gap: 14 },
+  group: { gap: 8 },
+  groupHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  groupName: { color: C.textSecondary, fontSize: 12, fontWeight: '700', letterSpacing: 0.6 },
+  groupCats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 2 },
+  groupCat: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  groupCatText: { color: C.text, fontSize: 13, fontWeight: '600' },
+  groupTimer: { color: C.green, fontSize: 18, ...MONO_DIGITS },
+  largar: { backgroundColor: C.green, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18 },
+  largarDisabled: { opacity: 0.35 },
+  largarText: { color: C.bg, fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
+  waiting: { color: C.textTertiary, fontSize: 12 },
   noPilots: { alignItems: 'center', paddingVertical: 16, gap: 12 },
   noPilotsText: { color: C.textSecondary, fontSize: 15 },
   cta: { backgroundColor: C.card, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 20 },
   ctaText: { color: C.orange, fontSize: 15, fontWeight: '600' },
-  segment: { paddingHorizontal: 16, marginTop: 16, marginBottom: 4 },
-  list: { flex: 1 },
+  segment: { paddingHorizontal: 16, marginTop: 12, marginBottom: 4 },
 });

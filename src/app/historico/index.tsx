@@ -7,7 +7,7 @@ import { EmptyHint } from '@/components/RaceLists';
 import { BottomTabInset } from '@/constants/layout';
 import { C, MONO_DIGITS } from '@/constants/theme';
 import { formatClock, formatDate, formatMs, plural } from '@/lib/format';
-import { raceDuration, standings } from '@/lib/race';
+import { raceDuration, standingsByCategory } from '@/lib/race';
 import { useStore } from '@/lib/store';
 
 export default function HistoricoScreen() {
@@ -18,11 +18,14 @@ export default function HistoricoScreen() {
   const items = useMemo(
     () =>
       races.map((r) => {
-        const winner = standings(r)[0];
+        const winners = standingsByCategory(r)
+          .map((c) => ({ cat: c, s: c.rows[0] }))
+          .filter((w) => w.s && w.s.laps > 0)
+          .map((w) => `${w.cat.name}: #${w.s.pilot.number} ${w.s.pilot.name.split(' ')[0]}`);
         return {
           race: r,
           duration: raceDuration(r),
-          winner: winner && winner.laps > 0 ? winner : null,
+          winners: winners.join(' · '),
         };
       }),
     [races],
@@ -57,9 +60,9 @@ export default function HistoricoScreen() {
                   {plural(item.race.pilots.length, 'piloto', 'pilotos')} ·{' '}
                   {plural(item.race.laps.length, 'volta', 'voltas')}
                 </Text>
-                {item.winner && (
-                  <Text style={styles.winner} numberOfLines={1}>
-                    1º #{item.winner.pilot.number} {item.winner.pilot.name}
+                {!!item.winners && (
+                  <Text style={styles.winner} numberOfLines={2}>
+                    1º {item.winners}
                   </Text>
                 )}
               </View>

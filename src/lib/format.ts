@@ -30,8 +30,10 @@ export function formatClock(ts: number, seconds = false): string {
   return seconds ? `${base}:${pad(d.getSeconds())}` : base;
 }
 
-export function defaultRaceName(ts = Date.now()): string {
-  return `Corrida ${formatDate(ts)} ${formatClock(ts)}`;
+export function defaultRaceName(ts = Date.now(), label?: string): string {
+  const d = new Date(ts);
+  const short = `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${formatClock(ts)}`;
+  return label ? `${label} · ${short}` : `Corrida ${formatDate(ts)} ${formatClock(ts)}`;
 }
 
 export function plural(n: number, one: string, many: string) {
