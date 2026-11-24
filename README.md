@@ -4,11 +4,6 @@ Aplicativo mobile para **cronometrar corridas com largada por pelotão**: motocr
 
 Você cadastra os pilotos por categoria, monta os pelotões, larga um pelotão depois do outro e marca cada volta tocando no número do piloto. O app calcula o tempo de cada volta, monta a classificação de cada categoria ao vivo, guarda o histórico e exporta tudo para Excel. Funciona offline, e os dados ficam salvos no próprio celular.
 
-![Expo SDK 57](https://img.shields.io/badge/Expo-SDK%2057-000?logo=expo)
-![React Native 0.86](https://img.shields.io/badge/React%20Native-0.86-61DAFB?logo=react&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
-![Android](https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white)
-
 <p align="center">
   <img src="docs/img/montagem-pelotoes.png" width="240" alt="Montagem dos pelotões">
   <img src="docs/img/corrida.png" width="240" alt="Corrida em andamento com dois pelotões">
