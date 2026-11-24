@@ -13,8 +13,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $Src     = $PSScriptRoot
-$Version = Split-Path $Src -Leaf
-$Build   = "C:\cbuild\corridas-$Version"          # caminho curto (limite de 260 caracteres do Windows)
+$Version = 'v' + ((Get-Content (Join-Path $Src 'package.json') -Raw | ConvertFrom-Json).version)
+$Build   = 'C:\cbuild\corridas'                  # caminho curto (limite de 260 caracteres do Windows)
 $Sdk     = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
 $ApkOut  = Join-Path $Src "Corridas-$Version.apk"
 
